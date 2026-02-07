@@ -57,7 +57,7 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
     && cp -r /root/.oh-my-zsh /etc/skel/.oh-my-zsh
 
 # ---- Isaac Lab installation -------------------------------------------------
-ARG ISAAC_LAB_VERSION=v2.3.2
+ARG ISAAC_LAB_VERSION=v2.3.0
 ARG ISAAC_LAB_REPO=https://github.com/isaac-sim/IsaacLab.git
 
 RUN git clone --branch ${ISAAC_LAB_VERSION} --depth 1 ${ISAAC_LAB_REPO} /opt/isaac-lab \

@@ -41,6 +41,12 @@ ZSHRC
     chown "${TARGET_USER}:${TARGET_GROUP}" "${TARGET_HOME}/.zshrc"
 fi
 
+# ---- Fix ownership of Isaac Sim writable dirs --------------------------------
+for d in /isaac-sim/kit/data /isaac-sim/kit/cache; do
+    mkdir -p "$d"
+    chown -R "${TARGET_USER}:${TARGET_GROUP}" "$d" 2>/dev/null || true
+done
+
 # ---- Fix ownership of cache dirs that may be mounted as root ----------------
 for d in \
     "${TARGET_HOME}/.cache" \
