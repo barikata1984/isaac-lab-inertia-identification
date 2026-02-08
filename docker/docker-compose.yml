@@ -4,14 +4,14 @@
 # Usage:
 #   docker compose build
 #   docker compose up -d
-#   docker compose exec isaac-dev zsh
+#   docker compose exec isaac-lab-inertia-identification zsh
 #
 # This file is designed to work both standalone (docker compose) and as
 # the backend for VS Code devcontainers.
 # =============================================================================
 
 services:
-  isaac-dev:
+  isaac-lab-inertia-identification:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -22,8 +22,8 @@ services:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
         HOST_USER: ${HOST_USER:-${USER:-developer}}
-    image: isaac-lab-dev:latest
-    container_name: isaac-lab-dev
+    image: isaac-lab-inertia-identification:latest
+    container_name: isaac-lab-inertia-identification
 
     # --- Runtime ---
     runtime: nvidia

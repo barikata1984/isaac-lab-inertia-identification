@@ -6,7 +6,7 @@
   // The same docker-compose.yml works standalone with `docker compose up`.
   // --------------------------------------------------------------------------
   "dockerComposeFile": ["../docker/docker-compose.yml"],
-  "service": "isaac-dev",
+  "service": "isaac-lab-inertia-identification",
   "workspaceFolder": "/workspace",
 
   // --------------------------------------------------------------------------

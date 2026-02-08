@@ -46,7 +46,7 @@ docker compose -f docker/docker-compose.yml build
 docker compose -f docker/docker-compose.yml up -d
 
 # コンテナに入る
-docker compose -f docker/docker-compose.yml exec isaac-dev zsh
+docker compose -f docker/docker-compose.yml exec isaac-lab-inertia-identification zsh
 
 # 停止
 docker compose -f docker/docker-compose.yml down

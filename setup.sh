@@ -70,6 +70,6 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
     echo "=== Build complete ==="
     echo "Start with:  docker compose -f docker/docker-compose.yml up -d"
-    echo "Enter with:  docker compose -f docker/docker-compose.yml exec isaac-dev zsh"
+    echo "Enter with:  docker compose -f docker/docker-compose.yml exec isaac-lab-inertia-identification zsh"
     echo "Or open in VS Code with Dev Containers extension."
 fi
