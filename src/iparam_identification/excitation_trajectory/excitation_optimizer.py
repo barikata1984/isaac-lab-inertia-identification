@@ -21,7 +21,7 @@ from scipy.optimize import minimize
 from kinematics import PinocchioKinematics
 from trajectories import WindowedFourierTrajectoryConfig
 
-from .collision_checker import CollisionChecker, CollisionConfig
+from collision_check import CollisionChecker, CollisionConfig
 from .constraints import (
     JointLimits,
     WorkspaceConstraintConfig,

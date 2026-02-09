@@ -10,7 +10,7 @@ from typing import Callable
 
 import numpy as np
 
-from .collision_checker import CollisionChecker, CollisionConfig
+from collision_check import CollisionChecker, CollisionConfig
 
 
 @dataclass

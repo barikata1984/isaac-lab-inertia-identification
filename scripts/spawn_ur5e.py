@@ -20,113 +20,17 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import os
 import torch
 
-import omni.kit.app
-from carb.eventdispatcher import get_eventdispatcher
-
-import isaacsim.core.utils.prims as prim_utils
-
-import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation
-from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.sim import SimulationContext
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+import isaaclab.sim as sim_utils
 
+from isaac_utils.bootstrap import setup_quit_handler
+from isaac_utils.scene import make_ur5e_cfg, design_scene
 
-def _force_quit(_event):
-    """Called by Kit when the user clicks [x].  sim.step() blocks while the
-    simulation is stopped/paused, so a flag-based approach cannot work —
-    we must terminate the process from inside the callback."""
-    print("[INFO]: Window close requested. Shutting down...")
-    os._exit(0)
-
-
-# Subscribe as early as possible so it is active throughout the session.
-_quit_subs = [
-    get_eventdispatcher().observe_event(
-        event_name=omni.kit.app.GLOBAL_EVENT_POST_QUIT,
-        on_event=_force_quit,
-        observer_name="spawn_ur5e_quit",
-        order=0,
-    ),
-    get_eventdispatcher().observe_event(
-        event_name=omni.kit.app.GLOBAL_EVENT_PRE_SHUTDOWN,
-        on_event=_force_quit,
-        observer_name="spawn_ur5e_shutdown",
-        order=0,
-    ),
-]
-
-
-# UR5e configuration
-UR5E_CFG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd",
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=True,
-            max_depenetration_velocity=5.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
-            solver_position_iteration_count=16,
-            solver_velocity_iteration_count=1,
-        ),
-        activate_contact_sensors=False,
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        joint_pos={
-            "shoulder_pan_joint": 0.0,
-            "shoulder_lift_joint": -1.5707,
-            "elbow_joint": 1.5707,
-            "wrist_1_joint": -1.5707,
-            "wrist_2_joint": -1.5707,
-            "wrist_3_joint": 0.0,
-        },
-    ),
-    actuators={
-        "shoulder": ImplicitActuatorCfg(
-            joint_names_expr=["shoulder_.*"],
-            stiffness=800.0,
-            damping=40.0,
-        ),
-        "elbow": ImplicitActuatorCfg(
-            joint_names_expr=["elbow_joint"],
-            stiffness=800.0,
-            damping=40.0,
-        ),
-        "wrist": ImplicitActuatorCfg(
-            joint_names_expr=["wrist_.*"],
-            stiffness=800.0,
-            damping=40.0,
-        ),
-    },
-)
-
-
-def design_scene() -> tuple[dict, list[list[float]]]:
-    """Designs the scene with a UR5e robot."""
-    # Ground plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-
-    # Dome light
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8))
-    cfg.func("/World/Light", cfg)
-
-    # Robot origin
-    origins = [[0.0, 0.0, 0.0]]
-    prim_utils.create_prim("/World/Origin", "Xform", translation=origins[0])
-
-    # Spawn UR5e
-    ur5e_cfg = UR5E_CFG.copy()
-    ur5e_cfg.prim_path = "/World/Origin/Robot"
-    ur5e = Articulation(cfg=ur5e_cfg)
-
-    scene_entities = {"ur5e": ur5e}
-    return scene_entities, origins
+# Register GUI close handlers
+_quit_subs = setup_quit_handler()
 
 
 def run_simulator(sim: SimulationContext, entities: dict[str, Articulation], origins: torch.Tensor):
@@ -166,7 +70,8 @@ def main():
     # Camera positioned to view the robot
     sim.set_camera_view([1.5, 1.5, 1.0], [0.0, 0.0, 0.3])
 
-    scene_entities, scene_origins = design_scene()
+    ur5e_cfg = make_ur5e_cfg(enable_self_collisions=False)
+    scene_entities, scene_origins = design_scene(ur5e_cfg)
     scene_origins = torch.tensor(scene_origins, device=sim.device)
 
     sim.reset()

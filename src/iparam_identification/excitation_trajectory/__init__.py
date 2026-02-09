@@ -6,7 +6,8 @@ Provides tools for:
 - FK-based geometric collision detection
 """
 
-from .collision_checker import CollisionChecker, CollisionConfig
+from collision_check import CollisionChecker, CollisionConfig
+from collision_check.capsule_checker import CapsuleCollisionChecker
 from .constraints import (
     JointLimits,
     WorkspaceConstraintConfig,
@@ -22,6 +23,7 @@ from .excitation_optimizer import (
 )
 
 __all__ = [
+    "CapsuleCollisionChecker",
     "CollisionChecker",
     "CollisionConfig",
     "JointLimits",

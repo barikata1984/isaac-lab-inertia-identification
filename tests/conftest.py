@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from scipy.constants import g as STANDARD_GRAVITY
 
 
 @pytest.fixture
@@ -48,7 +49,7 @@ def sample_phi():
 @pytest.fixture
 def gravity():
     """Standard gravity vector."""
-    return np.array([0.0, 0.0, -9.81])
+    return np.array([0.0, 0.0, -STANDARD_GRAVITY])
 
 
 @pytest.fixture

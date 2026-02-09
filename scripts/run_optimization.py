@@ -16,6 +16,8 @@ from pathlib import Path
 
 import numpy as np
 
+from models.robots.ur.ur5e import Q0_IDENTIFICATION, URDF_PATH
+
 
 def main() -> None:
     """Run trajectory optimization."""
@@ -92,11 +94,6 @@ def main() -> None:
     logger.info("Excitation Trajectory Optimization")
     logger.info("=" * 60)
 
-    q0 = np.array([
-        np.pi / 2, -np.pi / 2, np.pi / 2,
-        -np.pi / 2, -np.pi / 2, np.pi / 2,
-    ])
-
     workspace_cfg = WorkspaceConstraintConfig(
         max_displacement=args.max_displacement,
         box_lower=np.array(args.box_lower) if args.box_lower is not None else None,
@@ -108,7 +105,7 @@ def main() -> None:
         base_freq=args.base_freq,
         duration=args.duration,
         fps=args.fps,
-        q0=q0,
+        q0=Q0_IDENTIFICATION,
         workspace=workspace_cfg,
         subsample_factor=args.subsample,
         n_monte_carlo=args.restarts,
@@ -135,15 +132,11 @@ def main() -> None:
     logger.info("")
 
     logger.info("Loading kinematics...")
-    _urdf_path = (
-        "/isaac-sim/exts/isaacsim.robot_motion.motion_generation"
-        "/motion_policy_configs/universal_robots/ur5e/ur5e.urdf"
-    )
     try:
         kin = PinocchioKinematics.for_ur5e()
     except ImportError:
         logger.info("  ROS2 not available, loading from URDF directly")
-        kin = PinocchioKinematics.from_urdf_path(_urdf_path)
+        kin = PinocchioKinematics.from_urdf_path(URDF_PATH)
 
     logger.info("Starting optimization...")
     logger.info("")
@@ -171,7 +164,7 @@ def main() -> None:
     logger.info(f"  Joint pos lower: {validation['q_margin_lower']:.4f} rad")
     logger.info(f"  Joint pos upper: {validation['q_margin_upper']:.4f} rad")
     logger.info(f"  Joint velocity: {validation['dq_margin']:.4f} rad/s")
-    logger.info(f"  Joint accel: {validation['ddq_margin']:.4f} rad/s²")
+    logger.info(f"  Joint accel: {validation['ddq_margin']:.4f} rad/s^2")
     logger.info(
         f"  Tool0 displacement: "
         f"{validation['max_tool0_displacement']:.4f} m",
