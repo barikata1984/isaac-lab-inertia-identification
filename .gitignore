@@ -26,5 +26,8 @@ Thumbs.db
 # Isaac Sim cache
 .isaac-sim/
 
+# Generated data (optimization outputs)
+data/
+
 # Claude local settings
 .claude/settings.local.json
