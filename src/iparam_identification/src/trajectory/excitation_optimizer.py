@@ -429,9 +429,12 @@ class ExcitationOptimizer:
         # Workspace check
         p0, _ = self.kinematics.forward_kinematics(self.config.q0)
         max_disp = 0.0
+        displacements = np.zeros((len(q), 3))
         for i in range(len(q)):
             p, _ = self.kinematics.forward_kinematics(q[i])
-            max_disp = max(max_disp, float(np.linalg.norm(p - p0)))
+            delta = p - p0
+            displacements[i] = delta
+            max_disp = max(max_disp, float(np.linalg.norm(delta)))
 
         # Collision check (full resolution)
         min_clearance = self.collision_checker.compute_min_clearance(
@@ -449,7 +452,7 @@ class ExcitationOptimizer:
             min_clearance >= -tol,
         ])
 
-        return {
+        result_dict = {
             "condition_number_full": kappa_full,
             "condition_number_subsampled": result.condition_number,
             "n_timesteps": len(q),
@@ -459,6 +462,24 @@ class ExcitationOptimizer:
             "ddq_margin": ddq_margin,
             "max_tool0_displacement": max_disp,
             "min_collision_clearance": min_clearance,
-            "all_constraints_satisfied": all_satisfied,
             "singular_values": sv.tolist(),
         }
+
+        # Box constraint validation
+        ws = self.config.workspace
+        if ws.box_lower is not None and ws.box_upper is not None:
+            disp_min = displacements.min(axis=0)
+            disp_max = displacements.max(axis=0)
+            box_margin_lower = disp_min - ws.box_lower
+            box_margin_upper = ws.box_upper - disp_max
+            result_dict["box_displacement_min"] = disp_min.tolist()
+            result_dict["box_displacement_max"] = disp_max.tolist()
+            result_dict["box_margin_lower"] = box_margin_lower.tolist()
+            result_dict["box_margin_upper"] = box_margin_upper.tolist()
+            all_satisfied = all_satisfied and all([
+                float(np.min(box_margin_lower)) >= -tol,
+                float(np.min(box_margin_upper)) >= -tol,
+            ])
+
+        result_dict["all_constraints_satisfied"] = all_satisfied
+        return result_dict

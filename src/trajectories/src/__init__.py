@@ -14,8 +14,11 @@ from .windowed_fourier_spline import (
     WindowedFourierSplineTrajectoryConfig,
 )
 
-# Trajectory playback
-from .follower_node import main as follower_main
+# Trajectory playback (requires ROS2)
+try:
+    from .follower_node import main as follower_main
+except ImportError:
+    follower_main = None
 
 __all__ = [
     # Generation

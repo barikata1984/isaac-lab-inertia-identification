@@ -47,9 +47,15 @@ class WorkspaceConstraintConfig:
     Attributes:
         max_displacement: Maximum Euclidean distance of tool0 from
             initial position [m].
+        box_lower: Per-axis lower bounds on tool0 displacement from
+            initial position [m], shape (3,). None to disable.
+        box_upper: Per-axis upper bounds on tool0 displacement from
+            initial position [m], shape (3,). None to disable.
     """
 
     max_displacement: float = 0.8
+    box_lower: np.ndarray | None = None
+    box_upper: np.ndarray | None = None
 
 
 def build_trajectory_from_params(
@@ -241,6 +247,52 @@ def make_workspace_constraint(
     return constraint_fn
 
 
+def make_box_workspace_constraint(
+    workspace_config: WorkspaceConstraintConfig,
+    kinematics: "PinocchioKinematics",
+    q0: np.ndarray,
+    cache: _TrajectoryCache,
+    safety_margin: float = 0.02,
+) -> Callable[[np.ndarray], float]:
+    """Create per-axis box constraint on tool0 displacement.
+
+    Constraint: box_lower[i] + margin <= FK(q(t))[i] - FK(q0)[i]
+                                      <= box_upper[i] - margin
+    for all t and all axes i.
+
+    The safety margin compensates for subsampling during optimization,
+    ensuring full-resolution validation remains within bounds.
+
+    Args:
+        workspace_config: Workspace config with box_lower/box_upper.
+        kinematics: PinocchioKinematics instance.
+        q0: Initial joint configuration.
+        cache: Trajectory cache.
+        safety_margin: Extra margin [m] to compensate for subsampling
+            (default: 0.02).
+
+    Returns:
+        Constraint function returning minimum margin (>= 0 means feasible).
+    """
+    p0, _ = kinematics.forward_kinematics(q0)
+    box_lo = workspace_config.box_lower
+    box_hi = workspace_config.box_upper
+
+    def constraint_fn(x: np.ndarray) -> float:
+        q, _, _ = cache.get(x)
+        min_margin = np.inf
+        step = max(1, len(q) // 50)
+        for i in range(0, len(q), step):
+            p, _ = kinematics.forward_kinematics(q[i])
+            delta = p - p0
+            margin_lo = float(np.min(delta - box_lo)) - safety_margin
+            margin_hi = float(np.min(box_hi - delta)) - safety_margin
+            min_margin = min(min_margin, margin_lo, margin_hi)
+        return min_margin
+
+    return constraint_fn
+
+
 def make_collision_constraint(
     collision_checker: CollisionChecker,
     cache: _TrajectoryCache,
@@ -307,6 +359,14 @@ def build_scipy_constraints(
             workspace_config, kinematics, q0, cache,
         )},
     ]
+
+    if workspace_config.box_lower is not None and workspace_config.box_upper is not None:
+        constraints.append({
+            "type": "ineq",
+            "fun": make_box_workspace_constraint(
+                workspace_config, kinematics, q0, cache,
+            ),
+        })
 
     if collision_config.enabled:
         constraints.append({

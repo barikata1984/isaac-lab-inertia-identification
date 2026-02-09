@@ -19,6 +19,9 @@ rich
 ruff
 mypy
 
+# --- Numerical Computation ---
+numpy
+
 # --- Testing ---
 pytest
 pytest-xdist

@@ -62,6 +62,16 @@ def main() -> None:
         help="Max task-space displacement in meters (default: 0.8)",
     )
     parser.add_argument(
+        "--box-lower", type=float, nargs=3, default=None,
+        metavar=("X", "Y", "Z"),
+        help="Box constraint lower bounds [m] relative to FK(q0), e.g. -0.3 -0.3 -0.2",
+    )
+    parser.add_argument(
+        "--box-upper", type=float, nargs=3, default=None,
+        metavar=("X", "Y", "Z"),
+        help="Box constraint upper bounds [m] relative to FK(q0), e.g. 0.3 0.3 0.4",
+    )
+    parser.add_argument(
         "--seed", type=int, default=42,
         help="Random seed (default: 42)",
     )
@@ -95,15 +105,19 @@ def main() -> None:
         -np.pi / 2, -np.pi / 2, np.pi / 2,
     ])
 
+    workspace_cfg = WorkspaceConstraintConfig(
+        max_displacement=args.max_displacement,
+        box_lower=np.array(args.box_lower) if args.box_lower is not None else None,
+        box_upper=np.array(args.box_upper) if args.box_upper is not None else None,
+    )
+
     config = OptimizerConfig(
         num_harmonics=args.harmonics,
         base_freq=args.base_freq,
         duration=args.duration,
         fps=args.fps,
         q0=q0,
-        workspace=WorkspaceConstraintConfig(
-            max_displacement=args.max_displacement,
-        ),
+        workspace=workspace_cfg,
         subsample_factor=args.subsample,
         n_monte_carlo=args.restarts,
         max_iter_per_start=args.max_iter,
@@ -122,11 +136,22 @@ def main() -> None:
     logger.info(f"  Max iter: {config.max_iter_per_start}")
     logger.info(f"  Subsample: {config.subsample_factor}")
     logger.info(f"  Max displacement: {config.workspace.max_displacement} m")
+    if config.workspace.box_lower is not None:
+        logger.info(f"  Box lower: {config.workspace.box_lower.tolist()} m")
+        logger.info(f"  Box upper: {config.workspace.box_upper.tolist()} m")
     logger.info(f"  Seed: {config.seed}")
     logger.info("")
 
     logger.info("Loading kinematics...")
-    kin = PinocchioKinematics.for_ur5e()
+    _urdf_path = (
+        "/isaac-sim/exts/isaacsim.robot_motion.motion_generation"
+        "/motion_policy_configs/universal_robots/ur5e/ur5e.urdf"
+    )
+    try:
+        kin = PinocchioKinematics.for_ur5e()
+    except ImportError:
+        logger.info("  ROS2 not available, loading from URDF directly")
+        kin = PinocchioKinematics.from_urdf_path(_urdf_path)
 
     logger.info("Starting optimization...")
     logger.info("")
@@ -163,6 +188,20 @@ def main() -> None:
         f"  Collision clearance: "
         f"{validation['min_collision_clearance']:.4f} m",
     )
+    if "box_margin_lower" in validation:
+        logger.info(
+            f"  Box margin lower (xyz): "
+            f"{[f'{v:.4f}' for v in validation['box_margin_lower']]} m",
+        )
+        logger.info(
+            f"  Box margin upper (xyz): "
+            f"{[f'{v:.4f}' for v in validation['box_margin_upper']]} m",
+        )
+        logger.info(
+            f"  Box disp range (xyz): "
+            f"{[f'{v:.4f}' for v in validation['box_displacement_min']]} .. "
+            f"{[f'{v:.4f}' for v in validation['box_displacement_max']]} m",
+        )
     logger.info(
         f"  All satisfied: {validation['all_constraints_satisfied']}",
     )
