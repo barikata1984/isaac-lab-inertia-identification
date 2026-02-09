@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iparam-identification"
+version = "0.3.0"
+description = "Inertial parameter identification for UR robots using Isaac Sim"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Atsushi", email = "franche1984@gmail.com" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "pin>=2.7",
+    "tyro>=0.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-xdist", "ruff>=0.1", "mypy>=1.0"]
+
+[project.scripts]
+trajectory-generator = "trajectories.generator_cli:entry_point"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = ["slow: slow tests", "isaac: requires Isaac Sim"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kinematics", "trajectories", "iparam_identification", "sensor"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

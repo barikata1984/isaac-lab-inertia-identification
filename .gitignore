@@ -6,6 +6,11 @@ __pycache__/
 dist/
 build/
 *.egg
+.pytest_cache/
+
+# Literature PDFs (reference by DOI/URL in docs/references.md)
+*.pdf
+literature/
 
 # Virtual environments
 .venv/

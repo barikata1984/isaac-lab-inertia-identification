@@ -29,6 +29,7 @@
         // Python — point to Isaac Sim's bundled Python
         "python.defaultInterpreterPath": "/isaac-sim/python.sh",
         "python.analysis.extraPaths": [
+          "/workspace/src",
           "/isaac-sim/exts",
           "/isaac-sim/extsPhysics",
           "/opt/isaac-lab/source/isaaclab",
@@ -109,7 +110,7 @@
   // --------------------------------------------------------------------------
   // Lifecycle hooks — run once after container creation
   // --------------------------------------------------------------------------
-  "postCreateCommand": "echo '✅ Isaac Sim + Lab dev container ready.' && /isaac-sim/python.sh --version",
+  "postCreateCommand": "/isaac-sim/python.sh -m pip install -e /workspace && echo '✅ Isaac Sim + Lab dev container ready.' && /isaac-sim/python.sh --version",
 
   // --------------------------------------------------------------------------
   // Forward WebRTC streaming port (Isaac Sim UI streaming)
