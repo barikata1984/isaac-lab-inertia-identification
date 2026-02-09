@@ -21,6 +21,21 @@ Usage:
         --trajectory path/to/trajectory.json --save-data results.npz
 """
 
+# ── Preload Pinocchio's libassimp before Isaac Sim starts ─────────────
+# Isaac Sim's asset_converter extension bundles libassimp.so without C++11
+# ABI symbols, which conflicts with hpp-fcl (Pinocchio dependency).
+# Loading the cmeel-bundled libassimp first prevents the symbol clash.
+import ctypes, pathlib as _pl  # noqa: E401
+
+_cmeel_lib = (
+    _pl.Path("/isaac-sim/kit/python/lib/python3.11/site-packages/cmeel.prefix/lib")
+)
+_assimp_so = _cmeel_lib / "libassimp.so.5"
+if _assimp_so.exists():
+    ctypes.CDLL(str(_assimp_so), mode=ctypes.RTLD_GLOBAL)
+
+del ctypes, _pl, _cmeel_lib, _assimp_so
+
 # ── Isaac Lab bootstrap (must come before all other imports) ──────────
 
 """Launch Isaac Sim Simulator first."""
@@ -39,6 +54,14 @@ parser.add_argument(
 parser.add_argument(
     "--noise-torque", type=float, default=0.05,
     help="Torque noise std dev [Nm] (default: 0.05)",
+)
+parser.add_argument(
+    "--noise-encoder-pos", type=float, default=1e-4,
+    help="Joint position encoder noise std dev [rad] (default: 1e-4)",
+)
+parser.add_argument(
+    "--noise-encoder-vel", type=float, default=1e-3,
+    help="Joint velocity encoder noise std dev [rad/s] (default: 1e-3)",
 )
 parser.add_argument(
     "--trajectory", type=str, default=None,
@@ -236,6 +259,137 @@ class CuboidPayload:
         ])
 
 
+# ── Self-collision checker ────────────────────────────────────────────
+
+
+def _segment_distance(p1: np.ndarray, p2: np.ndarray,
+                      p3: np.ndarray, p4: np.ndarray) -> float:
+    """Minimum distance between line segment p1-p2 and segment p3-p4."""
+    d1 = p2 - p1
+    d2 = p4 - p3
+    r = p1 - p3
+
+    a = float(np.dot(d1, d1))
+    e = float(np.dot(d2, d2))
+    f = float(np.dot(d2, r))
+
+    EPS = 1e-12
+
+    if a <= EPS and e <= EPS:
+        return float(np.linalg.norm(r))
+
+    if a <= EPS:
+        return float(np.linalg.norm(r - np.clip(f / e, 0, 1) * d2))
+
+    c = float(np.dot(d1, r))
+
+    if e <= EPS:
+        s = np.clip(-c / a, 0, 1)
+        return float(np.linalg.norm(p1 + s * d1 - p3))
+
+    b = float(np.dot(d1, d2))
+    denom = a * e - b * b
+
+    s = np.clip((b * f - c * e) / denom, 0, 1) if abs(denom) > EPS else 0.0
+    t = (b * s + f) / e
+
+    if t < 0:
+        t = 0.0
+        s = np.clip(-c / a, 0, 1)
+    elif t > 1:
+        t = 1.0
+        s = np.clip((b - c) / a, 0, 1)
+
+    return float(np.linalg.norm((p1 + s * d1) - (p3 + t * d2)))
+
+
+class SelfCollisionChecker:
+    """FK-based self-collision checker using capsule approximation.
+
+    Models each UR5e link as a capsule (line segment + radius) and checks
+    minimum distance between non-adjacent link pairs.  Pairs separated by
+    fewer than ``min_gap`` joints are skipped (they cannot collide due to
+    joint mechanical limits).
+
+    Pinocchio joint layout for UR5e (njoints=7):
+        oMi[0] = universe, oMi[1] = shoulder_pan, oMi[2] = shoulder_lift,
+        oMi[3] = elbow, oMi[4] = wrist_1, oMi[5] = wrist_2, oMi[6] = wrist_3
+
+    Segment k connects oMi[k] to oMi[k+1]  (k = 0 .. njoints-2).
+    """
+
+    # Capsule radius per segment index [m] (conservative for UR5e)
+    _RADII = [
+        0.085,  # seg 0: base_link → shoulder_pan
+        0.075,  # seg 1: shoulder_pan → shoulder_lift  (zero-length)
+        0.065,  # seg 2: upper_arm (shoulder_lift → elbow)
+        0.055,  # seg 3: forearm (elbow → wrist_1)
+        0.045,  # seg 4: wrist_1 → wrist_2
+        0.045,  # seg 5: wrist_2 → wrist_3
+    ]
+
+    # Segment pairs to exclude from collision checking.
+    # These are physically in the same housing assembly in the UR5e:
+    #   (0,2): shoulder_pan and shoulder_lift are co-located (oMi[1]==oMi[2])
+    #   (3,5): wrist joints are a compact assembly (~0.1 m apart)
+    _EXCLUDE_PAIRS: frozenset[tuple[int, int]] = frozenset({(0, 2), (3, 5)})
+
+    def __init__(
+        self,
+        model,
+        data,
+        safety_margin: float = 0.01,
+        min_gap: int = 2,
+    ):
+        import pinocchio as pin  # noqa: F811
+        self._pin = pin
+        self.model = model
+        self.data = data
+        self.n_seg = model.njoints - 1
+
+        # Build pair list: (seg_i, seg_j, clearance_threshold)
+        self.pairs: list[tuple[int, int, float]] = []
+        for i in range(self.n_seg):
+            for j in range(i + min_gap, self.n_seg):
+                if (i, j) in self._EXCLUDE_PAIRS:
+                    continue
+                ri = self._RADII[i] if i < len(self._RADII) else 0.04
+                rj = self._RADII[j] if j < len(self._RADII) else 0.04
+                self.pairs.append((i, j, ri + rj + safety_margin))
+
+    def check(self, q: np.ndarray) -> tuple[bool, float, str]:
+        """Check for self-collision at joint configuration *q*.
+
+        Returns:
+            (collision, min_clearance, detail_message)
+            *collision* is True when any pair is closer than its threshold.
+        """
+        q = np.asarray(q, dtype=np.float64).ravel()
+        self._pin.forwardKinematics(self.model, self.data, q)
+
+        pos = [self.data.oMi[i].translation.copy()
+               for i in range(self.model.njoints)]
+
+        min_clearance = float("inf")
+        collision = False
+        detail = ""
+
+        for i, j, thresh in self.pairs:
+            dist = _segment_distance(pos[i], pos[i + 1], pos[j], pos[j + 1])
+            if dist < min_clearance:
+                min_clearance = dist
+
+            if dist < thresh:
+                collision = True
+                detail = (
+                    f"Self-collision: seg {i} <-> seg {j}, "
+                    f"dist={dist:.4f} m < threshold={thresh:.4f} m"
+                )
+                return collision, min_clearance, detail
+
+        return collision, min_clearance, detail
+
+
 # ── UR5e configuration ────────────────────────────────────────────────
 
 UR5E_CFG = ArticulationCfg(
@@ -246,7 +400,7 @@ UR5E_CFG = ArticulationCfg(
             max_depenetration_velocity=5.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
+            enabled_self_collisions=True,
             solver_position_iteration_count=16,
             solver_velocity_iteration_count=1,
         ),
@@ -488,9 +642,19 @@ def run_identification(
     payload: CuboidPayload,
     noise_force_std: float = 0.5,
     noise_torque_std: float = 0.05,
+    noise_encoder_pos: float = 1e-4,
+    noise_encoder_vel: float = 1e-3,
     save_data_path: str | None = None,
 ) -> dict:
     """Execute trajectory, collect data, and estimate inertial parameters.
+
+    Args:
+        noise_encoder_pos: Std dev of joint position encoder noise [rad].
+        noise_encoder_vel: Std dev of joint velocity encoder noise [rad/s].
+            Acceleration is computed via finite difference of noisy velocity,
+            so its noise is amplified by ~1/dt.  When both are >0 the
+            regressor matrix A is also noisy (errors-in-variables), which is
+            the scenario where TLS/RTLS should outperform OLS.
 
     Returns:
         dict with estimation results for each method.
@@ -507,6 +671,9 @@ def run_identification(
     print(f"[INFO] Loading kinematics from {UR5E_URDF_PATH}")
     kin = PinocchioKinematics.from_urdf_path(UR5E_URDF_PATH)
 
+    # Initialize self-collision checker
+    collision_checker = SelfCollisionChecker(kin.model, kin.model.createData())
+
     # Initialize simulated force sensor
     sensor = SimulatedForceSensor(
         kinematics=kin,
@@ -516,6 +683,13 @@ def run_identification(
         gravity=GRAVITY,
     )
     sensor.set_seed(42)
+
+    # Encoder noise RNG (separate from F/T sensor noise)
+    encoder_rng = np.random.default_rng(123)
+    has_encoder_noise = noise_encoder_pos > 0 or noise_encoder_vel > 0
+    if has_encoder_noise:
+        print(f"[INFO] Encoder noise: pos={noise_encoder_pos:.1e} rad, "
+              f"vel={noise_encoder_vel:.1e} rad/s")
 
     # Initialize RTLS estimator
     rtls = RecursiveTotalLeastSquares(min_init_samples=3)
@@ -537,8 +711,8 @@ def run_identification(
         sim.step()
         robot.update(sim_dt)
 
-    # Acceleration computation state
-    prev_dq = None
+    # Acceleration computation state (from noisy velocity)
+    prev_dq_meas = None
     skip_samples = 10  # skip first samples (finite-diff not valid)
 
     print(f"[INFO] Running trajectory ({n_steps} frames, "
@@ -557,16 +731,32 @@ def run_identification(
             sim.step()
         robot.update(sim_dt)
 
-        # Read actual state
-        q = robot.data.joint_pos[0].cpu().numpy()
-        dq = robot.data.joint_vel[0].cpu().numpy()
+        # Read actual state (ground truth from simulator)
+        q_true = robot.data.joint_pos[0].cpu().numpy()
+        dq_true = robot.data.joint_vel[0].cpu().numpy()
 
-        # Finite-difference acceleration
-        if prev_dq is not None:
-            ddq = (dq - prev_dq) / traj_dt
+        # Self-collision check (uses true state)
+        collision, _min_dist, col_detail = collision_checker.check(q_true)
+        if collision:
+            t = timestamps[i]
+            print(f"\n[NG] Trajectory aborted at t={t:.2f}s (frame {i}/{n_steps})")
+            print(f"  {col_detail}")
+            return {"status": "NG", "reason": col_detail, "time": t, "frame": i}
+
+        # Simulated encoder measurement (noisy)
+        if has_encoder_noise:
+            q_meas = q_true + encoder_rng.normal(0, noise_encoder_pos, 6)
+            dq_meas = dq_true + encoder_rng.normal(0, noise_encoder_vel, 6)
         else:
-            ddq = np.zeros(6)
-        prev_dq = dq.copy()
+            q_meas = q_true
+            dq_meas = dq_true
+
+        # Finite-difference acceleration from noisy velocity
+        if prev_dq_meas is not None:
+            ddq_meas = (dq_meas - prev_dq_meas) / traj_dt
+        else:
+            ddq_meas = np.zeros(6)
+        prev_dq_meas = dq_meas.copy()
 
         # Skip initial samples
         if i < skip_samples:
@@ -574,20 +764,20 @@ def run_identification(
 
         t = timestamps[i]
 
-        # Compute regressor
-        A_k = kin.compute_regressor(q, dq, ddq, GRAVITY)
+        # Compute regressor from noisy joint measurements
+        A_k = kin.compute_regressor(q_meas, dq_meas, ddq_meas, GRAVITY)
 
-        # Simulate F/T measurement
-        wrench = sensor.measure(q, dq, ddq, t)
+        # Simulate F/T measurement (true state + F/T sensor noise)
+        wrench = sensor.measure(q_true, dq_true, ddq_meas, t)
         y_k = wrench.wrench  # (6,)
 
         # Online RTLS update
         phi_hat = rtls.update(A_k, y_k)
 
-        # Store for batch estimation
+        # Store for batch estimation (noisy measurements)
         data_buffer.add_sample(SensorData(
             timestamp=t,
-            q=q, dq=dq, ddq=ddq,
+            q=q_meas, dq=dq_meas, ddq=ddq_meas,
             force=wrench.force, torque=wrench.torque,
             gravity=GRAVITY,
         ))
@@ -644,6 +834,7 @@ def run_identification(
         print(f"[INFO] Data saved to {save_data_path}")
 
     return {
+        "status": "OK",
         "phi_true": payload.phi_true,
         "result_ols": result_ols,
         "result_tls": result_tls,
@@ -702,10 +893,15 @@ def main():
         payload=payload,
         noise_force_std=args_cli.noise_force,
         noise_torque_std=args_cli.noise_torque,
+        noise_encoder_pos=args_cli.noise_encoder_pos,
+        noise_encoder_vel=args_cli.noise_encoder_vel,
         save_data_path=args_cli.save_data,
     )
 
-    print("\n[INFO] Done.")
+    if results.get("status") == "NG":
+        print(f"\n[NG] Trajectory is not feasible: {results['reason']}")
+    else:
+        print("\n[INFO] Done.")
 
 
 if __name__ == "__main__":
