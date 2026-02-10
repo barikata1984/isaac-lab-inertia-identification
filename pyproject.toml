@@ -15,6 +15,7 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "pin>=2.7",
+    "docstring-parser==0.16",
     "tyro>=0.5",
 ]
 

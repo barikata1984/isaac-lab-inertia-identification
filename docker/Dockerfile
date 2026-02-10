@@ -60,6 +60,12 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 ARG ISAAC_LAB_VERSION=v2.3.0
 ARG ISAAC_LAB_REPO=https://github.com/isaac-sim/IsaacLab.git
 
+# Workaround: setuptools 82.0.0 (2026-02-08) removed pkg_resources, but
+# flatdict 4.0.1 (unmaintained Isaac Lab dependency) imports it in setup.py.
+# Constrain setuptools<82 in all pip build-isolation environments.
+RUN echo "setuptools<82" > /etc/pip-constraints.txt
+ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
+
 RUN git clone --branch ${ISAAC_LAB_VERSION} --depth 1 ${ISAAC_LAB_REPO} /opt/isaac-lab \
     && ln -s /isaac-sim /opt/isaac-lab/_isaac_sim \
     && cd /opt/isaac-lab \
