@@ -60,6 +60,10 @@ parser.add_argument(
     "--save-data", type=str, default=None,
     help="Path to save collected data (.npz)",
 )
+parser.add_argument(
+    "--playback-speed", type=float, default=1.0,
+    help="GUI playback speed multiplier (default: 1.0, use 0.1 for slow-mo)",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -70,6 +74,7 @@ simulation_app = app_launcher.app
 
 # ── Standard imports ──────────────────────────────────────────────────
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -81,7 +86,7 @@ from isaaclab.sim import SimulationContext
 
 # ── Workspace package imports ─────────────────────────────────────────
 
-from models.robots.ur.ur5e import Q0_IDENTIFICATION, URDF_PATH
+from models.robots.ur.ur5e import URDF_PATH
 from models.payloads.cuboid import CuboidPayload
 from collision_check.capsule_checker import CapsuleCollisionChecker
 
@@ -100,7 +105,7 @@ from iparam_identification.utils.trajectory_io import (
 from iparam_identification.utils.reporting import print_results
 
 from isaac_utils.bootstrap import setup_quit_handler
-from isaac_utils.scene import design_scene, create_and_attach_payload
+from isaac_utils.scene import make_ur5e_cfg, design_scene, create_and_attach_payload
 
 # ── GUI close handler ─────────────────────────────────────────────────
 
@@ -123,6 +128,7 @@ def run_identification(
     noise_encoder_pos: float = 1e-4,
     noise_encoder_vel: float = 1e-3,
     save_data_path: str | None = None,
+    playback_speed: float = 1.0,
 ) -> dict:
     """Execute trajectory, collect data, and estimate inertial parameters."""
     sim_dt = sim.get_physics_dt()
@@ -166,23 +172,16 @@ def run_identification(
     # Convergence tracking
     convergence_log = []
 
-    # Move to start position and settle
-    print("[INFO] Moving to start position...")
-    start_pos = torch.tensor(
-        q_des[0].astype(np.float32).reshape(1, -1), device=sim.device
-    )
-    robot.set_joint_position_target(start_pos)
-    robot.write_data_to_sim()
-    for _ in range(200):
-        sim.step()
-        robot.update(sim_dt)
-
     # Acceleration computation state (from noisy velocity)
     prev_dq_meas = None
     skip_samples = 10  # skip first samples (finite-diff not valid)
 
     print(f"[INFO] Running trajectory ({n_steps} frames, "
           f"{timestamps[-1]:.1f}s, {steps_per_frame} physics steps/frame)...")
+    if playback_speed != 1.0:
+        print(f"[INFO] Playback speed: {playback_speed}x")
+
+    wall_start = time.perf_counter()
 
     for i in range(n_steps):
         # Set PD target
@@ -196,6 +195,13 @@ def run_identification(
         for _ in range(steps_per_frame):
             sim.step()
         robot.update(sim_dt)
+
+        # Throttle for playback speed
+        if playback_speed > 0 and playback_speed < 1.0:
+            expected_wall = timestamps[i] / playback_speed
+            elapsed = time.perf_counter() - wall_start
+            if elapsed < expected_wall:
+                time.sleep(expected_wall - elapsed)
 
         # Read actual state (ground truth from simulator)
         q_true = robot.data.joint_pos[0].cpu().numpy()
@@ -313,24 +319,7 @@ def run_identification(
 # ── Main ──────────────────────────────────────────────────────────────
 
 def main():
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
-    sim = SimulationContext(sim_cfg)
-    sim.set_camera_view([1.5, 1.5, 1.0], [0.0, 0.0, 0.3])
-
-    # Design scene
-    payload = CuboidPayload()
-    print(f"[INFO] Payload: {payload.width*100:.0f}x{payload.height*100:.0f}"
-          f"x{payload.depth*100:.0f} cm, mass={payload.mass:.2f} kg")
-
-    scene_entities, scene_origins = design_scene()
-
-    # Initialize physics
-    sim.reset()
-
-    # Attach payload after physics init
-    create_and_attach_payload(payload)
-
-    # Load trajectory
+    # Load trajectory first (to use its q0 as robot spawn position)
     traj_path = args_cli.trajectory
     if traj_path is None:
         default_path = (
@@ -346,10 +335,46 @@ def main():
         print("[INFO] No optimized trajectory found, generating fallback")
         trajectory = generate_fallback_trajectory()
 
-    timestamps = trajectory[0]
+    timestamps, q_des = trajectory[0], trajectory[1]
     print(f"  Duration: {timestamps[-1]:.1f}s, "
           f"Frames: {len(timestamps)}, "
           f"FPS: {1/(timestamps[1]-timestamps[0]):.0f}")
+
+    # Set up simulation
+    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
+    sim = SimulationContext(sim_cfg)
+    sim.set_camera_view([1.5, 1.5, 1.0], [0.0, 0.0, 0.3])
+
+    # Design scene (spawn robot at trajectory's initial position)
+    payload = CuboidPayload()
+    print(f"[INFO] Payload: {payload.width*100:.0f}x{payload.height*100:.0f}"
+          f"x{payload.depth*100:.0f} cm, mass={payload.mass:.2f} kg")
+
+    ur5e_cfg = make_ur5e_cfg(q0=q_des[0])
+    scene_entities, _ = design_scene(ur5e_cfg=ur5e_cfg)
+
+    # Embed payload as child of wrist_3_link BEFORE physics init
+    # (no fixed joint — payload is part of the link's rigid body)
+    create_and_attach_payload(payload)
+
+    # Initialize physics (payload already attached)
+    sim.reset()
+
+    # Teleport robot to trajectory start position and let it settle.
+    # sim.reset() spawns all joints at zero despite init_state, so we
+    # must explicitly write the desired joint state to the simulation.
+    robot = scene_entities["ur5e"]
+    sim_dt = sim.get_physics_dt()
+    start_q = torch.tensor(
+        q_des[0].astype(np.float32).reshape(1, -1), device=sim.device
+    )
+    zero_v = torch.zeros_like(start_q)
+    robot.write_joint_state_to_sim(start_q, zero_v)
+    robot.set_joint_position_target(start_q)
+    robot.write_data_to_sim()
+    for _ in range(200):
+        sim.step()
+        robot.update(sim_dt)
 
     # Run identification
     results = run_identification(
@@ -362,6 +387,7 @@ def main():
         noise_encoder_pos=args_cli.noise_encoder_pos,
         noise_encoder_vel=args_cli.noise_encoder_vel,
         save_data_path=args_cli.save_data,
+        playback_speed=args_cli.playback_speed,
     )
 
     if results.get("status") == "NG":

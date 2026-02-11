@@ -103,21 +103,33 @@ def design_scene(
 def create_and_attach_payload(
     payload,
     robot_prim_path: str = "/World/Origin/Robot",
-    payload_prim_path: str = "/World/Origin/Payload",
 ) -> None:
-    """Create payload cuboid and attach to tool0 via fixed joint.
+    """Embed payload as a child prim of wrist_3_link.
+
+    The payload becomes part of the link's rigid body (no separate
+    fixed joint needed).  Must be called BEFORE sim.reset() so that
+    the physics engine initialises with the payload already attached.
 
     Args:
         payload: Payload object with width, height, depth, mass,
             inertia_tensor, and com_offset attributes.
         robot_prim_path: USD path to the robot articulation.
-        payload_prim_path: USD path for the new payload prim.
     """
     from omni.usd import get_context
     stage = get_context().get_stage()
 
-    # Create cube geometry
-    cube = UsdGeom.Cube.Define(stage, payload_prim_path)
+    # Resolve attach link
+    link_path = f"{robot_prim_path}/tool0"
+    link_prim = stage.GetPrimAtPath(link_path)
+    if not link_prim or not link_prim.IsValid():
+        link_path = f"{robot_prim_path}/wrist_3_link"
+
+    # Create cube as a CHILD of the link (rigid attachment, no joint)
+    payload_path = f"{link_path}/payload"
+    cube = UsdGeom.Cube.Define(stage, payload_path)
+
+    # Local offset from link origin
+    cube.AddTranslateOp().Set(Gf.Vec3d(*payload.com_offset))
     scale = Gf.Vec3f(
         payload.width / 2,
         payload.height / 2,
@@ -125,8 +137,7 @@ def create_and_attach_payload(
     )
     cube.AddScaleOp().Set(scale)
 
-    # Rigid body + mass
-    UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
+    # Mass (contributes to parent rigid body — no RigidBodyAPI here)
     mass_api = UsdPhysics.MassAPI.Apply(cube.GetPrim())
     mass_api.CreateMassAttr().Set(payload.mass)
     mass_api.CreateCenterOfMassAttr().Set(Gf.Vec3f(0, 0, 0))
@@ -140,21 +151,5 @@ def create_and_attach_payload(
     UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
     cube.GetDisplayColorAttr().Set([(0.8, 0.8, 0.85)])
 
-    # Fixed joint to tool0
-    tool0_path = f"{robot_prim_path}/tool0"
-    tool0_prim = stage.GetPrimAtPath(tool0_path)
-    if not tool0_prim or not tool0_prim.IsValid():
-        tool0_path = f"{robot_prim_path}/wrist_3_link"
-        print(f"[WARN] tool0 not found, using {tool0_path}")
-
-    joint_path = f"{payload_prim_path}/FixedJoint"
-    fixed_joint = UsdPhysics.FixedJoint.Define(stage, joint_path)
-    fixed_joint.CreateBody0Rel().SetTargets([tool0_path])
-    fixed_joint.CreateBody1Rel().SetTargets([payload_prim_path])
-    fixed_joint.CreateLocalPos0Attr().Set(Gf.Vec3f(*payload.com_offset))
-    fixed_joint.CreateLocalRot0Attr().Set(Gf.Quatf(1, 0, 0, 0))
-    fixed_joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0, 0, 0))
-    fixed_joint.CreateLocalRot1Attr().Set(Gf.Quatf(1, 0, 0, 0))
-
-    print(f"[INFO] Payload attached to {tool0_path} "
+    print(f"[INFO] Payload embedded in {link_path} "
           f"(mass={payload.mass:.2f} kg, offset={payload.com_offset})")
