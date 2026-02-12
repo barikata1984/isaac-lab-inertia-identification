@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from models.payloads import CuboidPayload, CylinderPayload, TwoStageCylinderPayload
 from models.robots.ur.ur5e import Q0_IDENTIFICATION, URDF_PATH
 
 
@@ -74,13 +75,23 @@ def main() -> None:
         "--output", type=str, default=None,
         help="Output JSON path (default: auto-select based on box constraint)",
     )
+    parser.add_argument(
+        "--payload", type=str, default=None,
+        choices=["cuboid", "cylinder", "two-stage"],
+        help="Payload type for reference (default: None)",
+    )
     args = parser.parse_args()
 
-    # Auto-select output filename based on box constraint if not explicitly specified
+    # Auto-select output filename based on box constraint and payload if not explicitly specified
     if args.output is None:
         base_dir = Path(__file__).parent.parent / "data"
+        suffix = ""
         if args.box_lower is not None or args.box_upper is not None:
-            args.output = str(base_dir / "optimized_trajectory_box.json")
+            suffix += "_box"
+        if args.payload is not None:
+            suffix += f"_{args.payload.replace('-', '_')}"
+        if suffix:
+            args.output = str(base_dir / f"optimized_trajectory{suffix}.json")
         else:
             args.output = str(base_dir / "optimized_trajectory.json")
 
@@ -100,6 +111,20 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("Excitation Trajectory Optimization")
     logger.info("=" * 60)
+
+    # Instantiate payload if specified
+    payload = None
+    if args.payload:
+        if args.payload == "two-stage":
+            payload = TwoStageCylinderPayload()
+        elif args.payload == "cylinder":
+            payload = CylinderPayload()
+        else:  # cuboid
+            payload = CuboidPayload()
+        logger.info(f"Payload: {args.payload}")
+        logger.info(f"  Mass: {payload.mass:.3f} kg")
+        logger.info(f"  COM offset: {payload.com_offset}")
+        logger.info("")
 
     workspace_cfg = WorkspaceConstraintConfig(
         max_displacement=args.max_displacement,
@@ -220,6 +245,15 @@ def main() -> None:
             for k, v in validation.items()
         },
     }
+
+    # Add payload information if specified
+    if payload is not None:
+        output_data["payload"] = {
+            "type": args.payload,
+            "mass": payload.mass,
+            "com_offset": list(payload.com_offset),
+            "phi_true": payload.phi_true.tolist(),
+        }
 
     with open(output_path, "w") as f:
         json.dump(output_data, f, indent=2)
