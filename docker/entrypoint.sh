@@ -35,8 +35,8 @@ alias isaac-python='/isaac-sim/python.sh'
 alias isaac-pip='/isaac-sim/python.sh -m pip'
 alias isaaclab='/opt/isaac-lab/isaaclab.sh'
 
-# Convenience: add Isaac Lab scripts to PATH
-export PATH="/opt/isaac-lab:${PATH}"
+# Convenience: add Isaac Lab scripts and user-local bin to PATH
+export PATH="$HOME/.local/bin:/opt/isaac-lab:${PATH}"
 ZSHRC
     chown "${TARGET_USER}:${TARGET_GROUP}" "${TARGET_HOME}/.zshrc"
 fi
@@ -57,6 +57,12 @@ for d in \
         chown -R "${TARGET_USER}:${TARGET_GROUP}" "$d" 2>/dev/null || true
     fi
 done
+
+# ---- Install project in editable mode (if pyproject.toml exists) -----------
+if [ -f /workspace/pyproject.toml ]; then
+    echo "📦 Installing project in editable mode..."
+    /isaac-sim/python.sh -m pip install --no-deps -e /workspace 2>&1 | tail -1
+fi
 
 # ---- Execute command as the target user -------------------------------------
 if [ "$(id -u)" = "0" ] && [ "${TARGET_USER}" != "root" ]; then

@@ -110,7 +110,7 @@
   // --------------------------------------------------------------------------
   // Lifecycle hooks — run once after container creation
   // --------------------------------------------------------------------------
-  "postCreateCommand": "/isaac-sim/python.sh -m pip install -e /workspace && echo '✅ Isaac Sim + Lab dev container ready.' && /isaac-sim/python.sh --version",
+  "postCreateCommand": "echo '✅ Isaac Sim + Lab dev container ready.' && /isaac-sim/python.sh --version",
 
   // --------------------------------------------------------------------------
   // Forward WebRTC streaming port (Isaac Sim UI streaming)

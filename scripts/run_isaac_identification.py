@@ -64,6 +64,11 @@ parser.add_argument(
     "--playback-speed", type=float, default=1.0,
     help="GUI playback speed multiplier (default: 1.0, use 0.1 for slow-mo)",
 )
+parser.add_argument(
+    "--payload-type", type=str, default="two-stage",
+    choices=["cuboid", "cylinder", "two-stage"],
+    help="Payload geometry type (default: two-stage)",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -88,6 +93,8 @@ from isaaclab.sim import SimulationContext
 
 from models.robots.ur.ur5e import URDF_PATH
 from models.payloads.cuboid import CuboidPayload
+from models.payloads.cylinder import CylinderPayload
+from models.payloads.two_stage_cylinder import TwoStageCylinderPayload
 from collision_check.capsule_checker import CapsuleCollisionChecker
 
 from kinematics import PinocchioKinematics
@@ -122,7 +129,7 @@ def run_identification(
     sim: SimulationContext,
     robot,
     trajectory: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-    payload: CuboidPayload,
+    payload: CuboidPayload | CylinderPayload | TwoStageCylinderPayload,
     noise_force_std: float = 0.5,
     noise_torque_std: float = 0.05,
     noise_encoder_pos: float = 1e-4,
@@ -346,9 +353,22 @@ def main():
     sim.set_camera_view([1.5, 1.5, 1.0], [0.0, 0.0, 0.3])
 
     # Design scene (spawn robot at trajectory's initial position)
-    payload = CuboidPayload()
-    print(f"[INFO] Payload: {payload.width*100:.0f}x{payload.height*100:.0f}"
-          f"x{payload.depth*100:.0f} cm, mass={payload.mass:.2f} kg")
+    if args_cli.payload_type == "two-stage":
+        payload = TwoStageCylinderPayload()
+        print(f"[INFO] Payload: Two-stage cylinder")
+        print(f"  Lower: radius={payload.lower_radius*100:.0f}cm, height={payload.lower_height*100:.0f}cm, "
+              f"mass={payload.lower_mass:.2f} kg")
+        print(f"  Upper: radius={payload.upper_radius*100:.0f}cm, height={payload.upper_height*100:.0f}cm, "
+              f"mass={payload.upper_mass:.2f} kg")
+        print(f"  Total: mass={payload.mass:.2f} kg, COM at z={payload.com_offset[2]*100:.1f}cm")
+    elif args_cli.payload_type == "cylinder":
+        payload = CylinderPayload()
+        print(f"[INFO] Payload: Cylinder (radius={payload.radius*100:.0f}cm, "
+              f"height={payload.height*100:.0f}cm, mass={payload.mass:.2f} kg)")
+    else:
+        payload = CuboidPayload()
+        print(f"[INFO] Payload: Cuboid ({payload.width*100:.0f}x{payload.height*100:.0f}"
+              f"x{payload.depth*100:.0f} cm, mass={payload.mass:.2f} kg)")
 
     ur5e_cfg = make_ur5e_cfg(q0=q_des[0])
     scene_entities, _ = design_scene(ur5e_cfg=ur5e_cfg)

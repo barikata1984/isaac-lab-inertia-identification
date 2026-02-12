@@ -11,6 +11,11 @@ import argparse
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="Spawn UR5e robot in Isaac Sim GUI.")
+parser.add_argument(
+    "--payload", type=str, default=None,
+    choices=["cuboid", "cylinder", "two-stage"],
+    help="Attach payload to robot (default: None)",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -27,7 +32,10 @@ from isaaclab.sim import SimulationContext
 import isaaclab.sim as sim_utils
 
 from isaac_utils.bootstrap import setup_quit_handler
-from isaac_utils.scene import make_ur5e_cfg, design_scene
+from isaac_utils.scene import make_ur5e_cfg, design_scene, create_and_attach_payload
+from models.payloads.cuboid import CuboidPayload
+from models.payloads.cylinder import CylinderPayload
+from models.payloads.two_stage_cylinder import TwoStageCylinderPayload
 
 # Register GUI close handlers
 _quit_subs = setup_quit_handler()
@@ -73,6 +81,28 @@ def main():
     ur5e_cfg = make_ur5e_cfg(enable_self_collisions=False)
     scene_entities, scene_origins = design_scene(ur5e_cfg)
     scene_origins = torch.tensor(scene_origins, device=sim.device)
+
+    # Optionally attach payload before physics init
+    if args_cli.payload:
+        if args_cli.payload == "two-stage":
+            payload = TwoStageCylinderPayload()
+            print(f"[INFO] Attaching two-stage cylinder payload")
+            print(f"  Lower: r={payload.lower_radius*100:.0f}cm, h={payload.lower_height*100:.0f}cm, "
+                  f"mass={payload.lower_mass:.2f} kg")
+            print(f"  Upper: r={payload.upper_radius*100:.0f}cm, h={payload.upper_height*100:.0f}cm, "
+                  f"mass={payload.upper_mass:.2f} kg")
+            print(f"  Total mass: {payload.mass:.2f} kg")
+        elif args_cli.payload == "cylinder":
+            payload = CylinderPayload()
+            print(f"[INFO] Attaching cylinder payload "
+                  f"(radius={payload.radius*100:.0f}cm, height={payload.height*100:.0f}cm, "
+                  f"mass={payload.mass:.2f} kg)")
+        else:
+            payload = CuboidPayload()
+            print(f"[INFO] Attaching cuboid payload "
+                  f"({payload.width*100:.0f}x{payload.height*100:.0f}x{payload.depth*100:.0f} cm, "
+                  f"mass={payload.mass:.2f} kg)")
+        create_and_attach_payload(payload)
 
     sim.reset()
     print("[INFO]: Setup complete. UR5e spawned.")

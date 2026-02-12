@@ -71,11 +71,18 @@ def main() -> None:
         help="Random seed (default: 42)",
     )
     parser.add_argument(
-        "--output", type=str,
-        default=str(Path(__file__).parent.parent / "data" / "optimized_trajectory.json"),
-        help="Output JSON path",
+        "--output", type=str, default=None,
+        help="Output JSON path (default: auto-select based on box constraint)",
     )
     args = parser.parse_args()
+
+    # Auto-select output filename based on box constraint if not explicitly specified
+    if args.output is None:
+        base_dir = Path(__file__).parent.parent / "data"
+        if args.box_lower is not None or args.box_upper is not None:
+            args.output = str(base_dir / "optimized_trajectory_box.json")
+        else:
+            args.output = str(base_dir / "optimized_trajectory.json")
 
     logging.basicConfig(
         level=logging.INFO,
